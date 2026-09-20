@@ -117,6 +117,42 @@ function fromLibrary(entry) {
   };
 }
 
+const HIDDEN_KEY = "hiddenLibrary";
+
+function getHidden() {
+  try {
+    const list = JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function setHidden(list) {
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(list));
+  } catch (error) {
+    /* ignore */
+  }
+}
+
+const restoreButton = document.createElement("button");
+restoreButton.type = "button";
+restoreButton.textContent = "Restore removed songs";
+restoreButton.hidden = true;
+restoreButton.style.cssText =
+  "margin-top:14px;padding:0;background:none;color:var(--blue);font-size:12px;text-decoration:underline;";
+playlist.before(restoreButton);
+
+function updateRestore() {
+  restoreButton.hidden = getHidden().length === 0;
+}
+
+restoreButton.addEventListener("click", () => {
+  setHidden([]);
+  location.reload();
+});
+
 function readFav(key) {
   try {
     return localStorage.getItem(`fav:${key}`) === "1";
@@ -192,12 +228,8 @@ function renderPlaylist() {
             <strong>${escapeHTML(song.title)}</strong>
             <span>${escapeHTML(song.artist)}</span>
           </div>
-          ${
-            song.builtin
-              ? ""
-              : `<button class="delete" data-delete="${index}" type="button"
-                  aria-label="Remove ${escapeHTML(song.title)}">×</button>`
-          }
+          <button class="delete" data-delete="${index}" type="button"
+                  aria-label="Remove ${escapeHTML(song.title)}">×</button>
         </div>`
     )
     .join("");
@@ -229,16 +261,27 @@ playlist.addEventListener("keydown", (event) => {
 });
 
 async function removeSong(index) {
-  const [removed] = songs.splice(index, 1);
+  const removed = songs[index];
   if (!removed) return;
 
-  URL.revokeObjectURL(removed.audioUrl);
-  if (removed.coverUrl !== DEFAULT_COVER) URL.revokeObjectURL(removed.coverUrl);
+  if (!window.confirm(`Remove "${removed.title}" from your playlist?`)) return;
 
-  try {
-    await dbDelete(removed.id);
-  } catch (error) {
-    console.error("Could not delete song", error);
+  songs.splice(index, 1);
+
+  if (removed.builtin) {
+    // Songs stored in the GitHub repo can't be deleted from the app,
+    // so they are hidden on this device. "Restore removed songs" brings them back.
+    setHidden([...new Set([...getHidden(), removed.id])]);
+    updateRestore();
+  } else {
+    URL.revokeObjectURL(removed.audioUrl);
+    if (removed.coverUrl !== DEFAULT_COVER) URL.revokeObjectURL(removed.coverUrl);
+
+    try {
+      await dbDelete(removed.id);
+    } catch (error) {
+      console.error("Could not delete song", error);
+    }
   }
 
   if (index === currentIndex) {
@@ -523,13 +566,20 @@ async function loadLibrary() {
     const response = await fetch("songs/songs.json", { cache: "no-cache" });
     if (!response.ok) return [];
     const list = await response.json();
-    return Array.isArray(list) ? list.filter((item) => item && item.file).map(fromLibrary) : [];
+    const hidden = getHidden();
+    return Array.isArray(list)
+      ? list
+          .filter((item) => item && item.file)
+          .map(fromLibrary)
+          .filter((song) => !hidden.includes(song.id))
+      : [];
   } catch (error) {
     return [];
   }
 }
 
 async function init() {
+  updateRestore();
   renderPlaylist();
   const library = await loadLibrary();
 
