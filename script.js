@@ -104,6 +104,35 @@ function escapeHTML(text) {
   })[char]);
 }
 
+function fromLibrary(entry) {
+  return {
+    id: `library:${entry.file}`,
+    title: entry.title || entry.file.replace(/\.[^/.]+$/, ""),
+    artist: entry.artist || "SWATLOVE Collection",
+    fav: readFav(`library:${entry.file}`),
+    record: null,
+    builtin: true,
+    audioUrl: `songs/${encodeURIComponent(entry.file)}`,
+    coverUrl: entry.cover ? `songs/${encodeURIComponent(entry.cover)}` : DEFAULT_COVER
+  };
+}
+
+function readFav(key) {
+  try {
+    return localStorage.getItem(`fav:${key}`) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function writeFav(key, on) {
+  try {
+    localStorage.setItem(`fav:${key}`, on ? "1" : "0");
+  } catch (error) {
+    /* ignore */
+  }
+}
+
 function fromRecord(record) {
   return {
     id: record.id,
@@ -163,8 +192,12 @@ function renderPlaylist() {
             <strong>${escapeHTML(song.title)}</strong>
             <span>${escapeHTML(song.artist)}</span>
           </div>
-          <button class="delete" data-delete="${index}" type="button"
-                  aria-label="Remove ${escapeHTML(song.title)}">×</button>
+          ${
+            song.builtin
+              ? ""
+              : `<button class="delete" data-delete="${index}" type="button"
+                  aria-label="Remove ${escapeHTML(song.title)}">×</button>`
+          }
         </div>`
     )
     .join("");
@@ -250,8 +283,14 @@ heart.addEventListener("click", async () => {
   if (!song) return;
 
   song.fav = !song.fav;
-  song.record.fav = song.fav;
   updateHeart();
+
+  if (song.builtin) {
+    writeFav(song.id, song.fav);
+    return;
+  }
+
+  song.record.fav = song.fav;
 
   try {
     await dbPut(song.record);
@@ -479,18 +518,31 @@ letterDialog.addEventListener("click", (event) => {
 
 /* ---------- start-up ---------- */
 
+async function loadLibrary() {
+  try {
+    const response = await fetch("songs/songs.json", { cache: "no-cache" });
+    if (!response.ok) return [];
+    const list = await response.json();
+    return Array.isArray(list) ? list.filter((item) => item && item.file).map(fromLibrary) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
 async function init() {
   renderPlaylist();
+  const library = await loadLibrary();
 
   try {
     const [records, savedBackground] = await Promise.all([
       dbAll(),
       settingGet("background")
     ]);
-    songs = records.map(fromRecord);
+    songs = [...library, ...records.map(fromRecord)];
     if (savedBackground) setBackground(savedBackground);
   } catch (error) {
     console.error("Storage is unavailable, songs will not be saved.", error);
+    songs = library;
   }
 
   renderPlaylist();
