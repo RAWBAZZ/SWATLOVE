@@ -103,7 +103,7 @@
     gate.innerHTML = `
       <form class="gate-box" autocomplete="off">
         <div class="gate-logo" aria-hidden="true">♡</div>
-        <h1>SWATLOVE</h1>
+        <h1>S.W.A.T</h1>
         <p>This is a private place. Enter the passcode to continue.</p>
         <input id="gateCode" type="password" placeholder="Passcode" autocomplete="off"
                autocapitalize="off" spellcheck="false" aria-label="Passcode" />
@@ -166,4 +166,3 @@
     });
   });
 })();
-
