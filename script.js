@@ -34,7 +34,6 @@ const backgroundName = $("backgroundName");
 const titleInput = $("titleInput");
 const artistInput = $("artistInput");
 
-const letterDialog = $("letterDialog");
 
 const DEFAULT_COVER = "assets/swat.jpg";
 const DEFAULT_TITLE = "Nothing playing";
@@ -54,11 +53,18 @@ let dbPromise;
 function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open("swatlove", 1);
+      const request = indexedDB.open("swatlove", 2);
       request.onupgradeneeded = () => {
         const db = request.result;
-        db.createObjectStore("songs", { keyPath: "id", autoIncrement: true });
-        db.createObjectStore("settings");
+        if (!db.objectStoreNames.contains("songs")) {
+          db.createObjectStore("songs", { keyPath: "id", autoIncrement: true });
+        }
+        if (!db.objectStoreNames.contains("settings")) {
+          db.createObjectStore("settings");
+        }
+        if (!db.objectStoreNames.contains("notes")) {
+          db.createObjectStore("notes", { keyPath: "id", autoIncrement: true });
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -394,16 +400,37 @@ next.addEventListener("click", nextSong);
 previous.addEventListener("click", previousSong);
 shuffle.addEventListener("click", shuffleSong);
 
+const ICON_PLAY = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+const ICON_PLAY_SMALL = ICON_PLAY.replace(/28/g, "20");
+const ICON_PAUSE_SMALL = ICON_PAUSE.replace(/28/g, "20");
+
+const record = $("record");
+
+// The record always turns slowly and speeds up while music plays.
+function setSpin(playing) {
+  document.body.classList.toggle("is-playing", playing);
+  try {
+    record.getAnimations().forEach((animation) => {
+      animation.playbackRate = playing ? 3 : 1;
+    });
+  } catch (error) {
+    /* older browsers keep the constant slow spin */
+  }
+}
+
 audio.addEventListener("play", () => {
-  play.textContent = "Ⅱ";
-  startButton.textContent = "Ⅱ Pause";
+  play.innerHTML = ICON_PAUSE;
+  startButton.innerHTML = `${ICON_PAUSE_SMALL}<span>Pause</span>`;
   playerCard.classList.add("playing");
+  setSpin(true);
 });
 
 audio.addEventListener("pause", () => {
-  play.textContent = "▶";
-  startButton.textContent = "▶ Start listening";
+  play.innerHTML = ICON_PLAY;
+  startButton.innerHTML = `${ICON_PLAY_SMALL}<span>Start listening</span>`;
   playerCard.classList.remove("playing");
+  setSpin(false);
 });
 
 audio.addEventListener("ended", nextSong);
@@ -455,7 +482,7 @@ document.addEventListener("keydown", (event) => {
   const tag = event.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
   if (event.target.closest && event.target.closest(".song")) return;
-  if (modal.classList.contains("open") || letterDialog.open) return;
+  if (document.querySelector(".modal.open, dialog[open]")) return;
 
   if (event.code === "Space") {
     event.preventDefault();
@@ -544,20 +571,25 @@ addSong.addEventListener("click", async () => {
   backgroundName.textContent = "Image shown behind the app";
 });
 
-/* ---------- letter ---------- */
+/* ---------- wordmark ---------- */
 
-function openLetter() {
-  if (typeof letterDialog.showModal === "function") letterDialog.showModal();
-  else window.open("assets/note.jpg", "_blank");
+function fitWordmark() {
+  const box = $("wordmark");
+  const text = box && box.firstElementChild;
+  if (!text) return;
+
+  box.style.fontSize = "100px";
+  const width = text.getBoundingClientRect().width;
+  const target = box.clientWidth;
+  if (!width || !target) return;
+
+  box.style.fontSize = `${Math.min(Math.floor((100 * target) / width), 260)}px`;
 }
 
-$("openLetter").addEventListener("click", openLetter);
-$("openLetterBtn").addEventListener("click", openLetter);
-$("closeLetter").addEventListener("click", () => letterDialog.close());
-
-letterDialog.addEventListener("click", (event) => {
-  if (event.target === letterDialog) letterDialog.close();
-});
+fitWordmark();
+window.addEventListener("resize", fitWordmark);
+window.addEventListener("load", fitWordmark);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitWordmark);
 
 /* ---------- start-up ---------- */
 

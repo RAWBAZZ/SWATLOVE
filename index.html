@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#0c0f17" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#06070d" />
   <title>SWATLOVE — Personal Jukebox</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>♡</text></svg>" />
   <link rel="stylesheet" href="style.css" />
@@ -15,35 +15,31 @@
     <header class="topbar">
       <div class="brand">
         <div class="brand-logo" aria-hidden="true">♡</div>
-        <div>
-          <h1>SWATLOVE</h1>
-          <p>Personal music universe</p>
-        </div>
+        <p>Personal music universe</p>
       </div>
       <button class="add-button" id="openUpload" type="button">＋ Add music</button>
     </header>
 
     <section class="hero">
-      <div class="hero-text">
-        <p class="eyebrow">YOUR PRIVATE JUKEBOX</p>
-        <h2>Every song<br />holds a feeling.</h2>
-        <p class="intro">
-          Songs, handwriting and memories, kept together in one quiet place.
-        </p>
+      <h1 class="wordmark" id="wordmark"><span>SWATLOVE</span></h1>
+      <p class="tagline">Every song holds a feeling</p>
 
-        <div class="hero-buttons">
-          <button class="primary-button" id="startButton" type="button">▶ Start listening</button>
-          <button class="shuffle-button" id="shuffleButton" type="button" aria-label="Shuffle">⤨</button>
+      <div class="turntable">
+        <div class="glow"></div>
+        <div class="record" id="record">
+          <div class="record-label"></div>
         </div>
+        <div class="sheen"></div>
       </div>
 
-      <div class="record-area">
-        <div class="light"></div>
-        <div class="record">
-          <div class="record-center"></div>
-        </div>
-        <div class="floating-card first">SWATLOVE</div>
-        <div class="floating-card second">MUSIC • MEMORY • LOVE</div>
+      <div class="hero-buttons">
+        <button class="primary-button" id="startButton" type="button">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          <span>Start listening</span>
+        </button>
+        <button class="round-button" id="shuffleButton" type="button" aria-label="Shuffle">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        </button>
       </div>
     </section>
 
@@ -55,7 +51,7 @@
             <h3 id="songTitle">Nothing playing</h3>
             <p id="artistName">Add a song to begin</p>
           </div>
-          <button class="heart-button" id="heartButton" type="button" aria-label="Favourite" aria-pressed="false">♡</button>
+          <button class="round-button" id="heartButton" type="button" aria-label="Favourite" aria-pressed="false">♡</button>
         </div>
 
         <div class="cover-container">
@@ -70,9 +66,15 @@
         <input id="progress" type="range" min="0" max="100" value="0" step="0.1" aria-label="Seek" />
 
         <div class="controls">
-          <button id="previous" type="button" aria-label="Previous song">⏮</button>
-          <button class="play-button" id="play" type="button" aria-label="Play or pause">▶</button>
-          <button id="next" type="button" aria-label="Next song">⏭</button>
+          <button id="previous" type="button" aria-label="Previous song">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M6 6h2v12H6zM9.5 12l9 6V6z"/></svg>
+          </button>
+          <button class="play-button" id="play" type="button" aria-label="Play or pause">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <button id="next" type="button" aria-label="Next song">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M16 6h2v12h-2zM14.5 12l-9 6V6z"/></svg>
+          </button>
         </div>
 
         <div class="volume">
@@ -96,25 +98,54 @@
       </div>
     </section>
 
-    <section class="letter">
-      <button class="letter-thumb" id="openLetter" type="button" aria-label="Open the handwritten note">
-        <img src="assets/note.jpg" alt="A handwritten note in Hindi" />
-      </button>
-      <div class="letter-text">
-        <p class="label">HANDWRITTEN</p>
-        <h3>The letter</h3>
-        <p class="modal-text">
-          Some words belong in the hand that wrote them. Open the note to read it full size.
-        </p>
-        <button class="primary-button" id="openLetterBtn" type="button">Read the note</button>
+    <section class="notes" id="notes">
+      <div class="section-head">
+        <div>
+          <p class="label">MEMORIES</p>
+          <h3>Notes</h3>
+        </div>
+        <button class="add-button" id="openNoteAdd" type="button">＋ Add note or photo</button>
       </div>
+      <div class="notes-row" id="notesRow"></div>
     </section>
   </main>
 
-  <dialog class="letter-dialog" id="letterDialog">
-    <button class="close" id="closeLetter" type="button" aria-label="Close">×</button>
-    <img src="assets/note.jpg" alt="A handwritten note in Hindi, full size" />
+  <dialog class="note-dialog" id="noteDialog" aria-label="Note">
+    <div class="note-view" id="noteView"></div>
   </dialog>
+
+  <div class="modal" id="noteModal" role="dialog" aria-modal="true" aria-labelledby="noteHeading">
+    <div class="modal-box">
+      <button class="close" id="closeNoteAdd" type="button" aria-label="Close">×</button>
+
+      <p class="label">NEW MEMORY</p>
+      <h2 id="noteHeading">Add to notes</h2>
+
+      <div class="seg" role="tablist">
+        <button class="on" id="segText" type="button" role="tab">Text note</button>
+        <button id="segPhoto" type="button" role="tab">Photo</button>
+      </div>
+
+      <input class="text-input" id="noteTitle" placeholder="Title (optional)" maxlength="60" />
+
+      <div id="noteTextField">
+        <textarea class="text-input note-area" id="noteText" placeholder="Write your note…" maxlength="4000"></textarea>
+      </div>
+
+      <div id="notePhotoField" style="display:none">
+        <label class="file-box">
+          <span>🖼️</span>
+          <strong>Choose a photo</strong>
+          <small id="notePhotoName">JPG, PNG, HEIC</small>
+          <input id="notePhotoFile" type="file" accept="image/*" />
+        </label>
+      </div>
+
+      <p class="form-error" id="noteError" role="alert" hidden></p>
+      <button class="primary-button full" id="saveNote" type="button">Save</button>
+      <p class="modal-text small">Notes and photos you add are saved in this browser only.</p>
+    </div>
+  </div>
 
   <div class="modal" id="uploadModal" role="dialog" aria-modal="true" aria-labelledby="uploadHeading">
     <div class="modal-box">
@@ -156,6 +187,7 @@
   </div>
 
   <script src="script.js"></script>
+  <script src="notes.js"></script>
   <script src="chat-config.js"></script>
   <script src="chat.js"></script>
 </body>
