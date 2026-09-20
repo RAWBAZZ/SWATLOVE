@@ -56,6 +56,15 @@
     return `${m}:${s}`;
   }
 
+  // The site lock (gate.js) saves the room here after the passcode is entered.
+  function unlockedRoom() {
+    try {
+      return localStorage.getItem("swatlove-unlock") || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
   function loadProfile() {
     try {
       return JSON.parse(localStorage.getItem(STORE)) || null;
@@ -215,6 +224,12 @@
     setStatus("");
     $("chatLeave").style.display = "none";
 
+    const unlocked = Boolean(unlockedRoom());
+    codeInput.style.display = unlocked ? "none" : "";
+    $("chatSetupText").textContent = unlocked
+      ? "Enter your name to join. You only need to do this once on this device."
+      : "Enter your name and the passcode to join. You only need to do this once on this device.";
+
     if (!configured) {
       $("chatSetupText").textContent =
         "Chat isn't connected yet. Add your Supabase URL and key in chat-config.js, then reload.";
@@ -288,17 +303,22 @@
       setStatus("Enter your name.", true);
       return;
     }
-    if (!code) {
-      setStatus("Enter the passcode.", true);
-      return;
-    }
-    if ((await gateHash(code)) !== GATE_HASH) {
-      setStatus("Wrong passcode.", true);
-      codeInput.value = "";
-      return;
+    let room = unlockedRoom();
+
+    if (!room) {
+      if (!code) {
+        setStatus("Enter the passcode.", true);
+        return;
+      }
+      if ((await gateHash(code)) !== GATE_HASH) {
+        setStatus("Wrong passcode.", true);
+        codeInput.value = "";
+        return;
+      }
+      room = await hashRoom(code);
     }
 
-    profile = { name, room: await hashRoom(code), seen: 0, gate: true };
+    profile = { name, room, seen: 0, gate: true };
     saveProfile();
     lastId = 0;
     unread = 0;
