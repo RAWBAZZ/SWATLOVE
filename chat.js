@@ -116,7 +116,7 @@
     .chat-panel.open { display: flex; }
     .chat-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
       border-bottom: 1px solid var(--border); }
-    .chat-head strong { display: block; font-family: "Space Grotesk", sans-serif; font-size: 18px; }
+    .chat-head strong { display: block; font-family: var(--display, Impact, sans-serif); font-size: 26px; font-weight: 400; letter-spacing: .08em; line-height: 1.1; }
     .chat-head small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
     .chat-head small.error { color: #ff8fa3; }
     .chat-head button { background: transparent; color: var(--muted); font-size: 22px; padding: 6px 8px; }
@@ -157,9 +157,9 @@
   const root = document.createElement("div");
   root.innerHTML = `
     <button class="chat-fab" id="chatFab" type="button" aria-label="Open chat">💬<span class="chat-badge" id="chatBadge" hidden>0</span></button>
-    <section class="chat-panel" id="chatPanel" role="dialog" aria-label="Chat">
+    <section class="chat-panel" id="chatPanel" role="dialog" aria-label="SATTU chat">
       <div class="chat-head">
-        <div><strong>Chat</strong><small id="chatStatus"></small></div>
+        <div><strong>SATTU</strong><small id="chatStatus"></small></div>
         <div>
           <button class="chat-leave" id="chatLeave" type="button" style="display:none">Leave</button>
           <button id="chatClose" type="button" aria-label="Close chat">×</button>
