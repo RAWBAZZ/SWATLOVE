@@ -468,7 +468,7 @@
       const ids = await rpc("list_message_ids", { p_room: profile.room });
       if (!Array.isArray(ids)) return;
 
-      const live = new Set(ids.map(Number));
+      const live = new Set(ids.map((row) => Number(row.id)));
       const oldestLive = ids.length ? Math.min(...live) : Infinity;
       const complete = ids.length < 200;
 
