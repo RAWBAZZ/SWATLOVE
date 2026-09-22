@@ -94,6 +94,11 @@
   let pollTimer = null;
   const shown = new Set();
 
+  let selecting = false;
+  let deleting = false;
+  let ignoreClickUntil = 0;
+  const selected = new Set();
+
   let recorder = null;
   let recStart = 0;
   let recTick = null;
@@ -147,6 +152,17 @@
     .chat-rec span { flex: 1; font-size: 15px; }
     .chat-rec .chat-send { background: linear-gradient(135deg, var(--purple), var(--pink)); }
     .chat-head .chat-leave { font-size: 12px; text-decoration: underline; }
+    .chat-msg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+    .chat-msgs.selecting .chat-msg { cursor: pointer; }
+    .chat-msgs.selecting audio { pointer-events: none; }
+    .chat-msg.selected .chat-bubble { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .chat-msg.selected .chat-who::before { content: "✓ "; color: var(--blue); }
+    .chat-select-bar { display: none; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+    .chat-select-bar.on { display: flex; }
+    .chat-select-bar button { padding: 11px 15px; border-radius: 999px; background: #ffffff14; font-size: 14px; font-weight: 700; }
+    .chat-select-bar .spacer { flex: 1; }
+    .chat-select-bar .danger { background: #e5384f; }
+    .chat-select-bar .danger:disabled { opacity: .4; cursor: default; }
     @keyframes chatPulse { 50% { opacity: .3; } }
     @media (max-width: 500px) {
       .chat-panel { right: 0; bottom: 0; width: 100vw; height: min(88dvh, 640px); border-radius: 22px 22px 0 0; }
@@ -161,6 +177,7 @@
       <div class="chat-head">
         <div><strong>SATTU</strong><small id="chatStatus"></small></div>
         <div>
+          <button class="chat-leave" id="chatSelect" type="button" style="display:none">Select</button>
           <button class="chat-leave" id="chatLeave" type="button" style="display:none">Leave</button>
           <button id="chatClose" type="button" aria-label="Close chat">×</button>
         </div>
@@ -179,6 +196,13 @@
         <button id="recCancel" type="button" aria-label="Cancel recording">✕</button>
         <div class="dot"></div><span id="recTime">0:00</span>
         <button class="chat-send" id="recSend" type="button" aria-label="Send voice note">➤</button>
+      </div>
+
+      <div class="chat-select-bar" id="chatSelectBar">
+        <button id="selCancel" type="button">Cancel</button>
+        <button id="selAll" type="button">Select all</button>
+        <span class="spacer"></span>
+        <button class="danger" id="selDelete" type="button" disabled>Delete (0)</button>
       </div>
 
       <div class="chat-input" id="chatInputRow" style="display:none">
@@ -204,6 +228,9 @@
   const textInput = $("chatText");
   const recBar = $("chatRec");
   const recTime = $("recTime");
+  const selectBar = $("chatSelectBar");
+  const selAll = $("selAll");
+  const selDelete = $("selDelete");
 
   function setStatus(text, isError) {
     statusEl.textContent = text || "";
@@ -223,6 +250,7 @@
     inputRow.style.display = "none";
     setStatus("");
     $("chatLeave").style.display = "none";
+    $("chatSelect").style.display = "none";
 
     const unlocked = Boolean(unlockedRoom());
     codeInput.style.display = unlocked ? "none" : "";
@@ -245,6 +273,7 @@
     inputRow.style.display = "flex";
     setStatus(`You are ${profile.name}`);
     $("chatLeave").style.display = "";
+    if (!selecting) $("chatSelect").style.display = "";
   }
 
   function openPanel() {
@@ -269,6 +298,7 @@
 
   function closePanel() {
     if (recorder) stopRecording(false);
+    exitSelect();
     isOpen = false;
     panel.classList.remove("open");
     fab.hidden = false;
@@ -277,6 +307,7 @@
 
   function leaveChat() {
     if (!window.confirm("Leave this chat on this device? Old messages stay in the room.")) return;
+    exitSelect();
     profile = null;
     saveProfile();
     lastId = 0;
@@ -292,7 +323,10 @@
   $("chatClose").addEventListener("click", closePanel);
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && isOpen) closePanel();
+    if (event.key === "Escape" && isOpen) {
+      if (selecting) exitSelect();
+      else closePanel();
+    }
   });
 
   joinButton.addEventListener("click", async () => {
@@ -351,6 +385,7 @@
     const mine = isMine(message);
     const row = document.createElement("div");
     row.className = `chat-msg ${mine ? "mine" : "theirs"}`;
+    row.dataset.id = String(message.id);
 
     const who = document.createElement("span");
     who.className = "chat-who";
@@ -399,6 +434,7 @@
       }
 
       if (isOpen) {
+        await reconcile();
         profile.seen = lastId;
         saveProfile();
         unread = 0;
@@ -415,6 +451,160 @@
       polling = false;
     }
   }
+
+  function removeMessage(id) {
+    shown.delete(id);
+    selected.delete(id);
+    const row = msgsEl.querySelector(`[data-id="${id}"]`);
+    if (row) row.remove();
+    if (!shown.size && !msgsEl.querySelector(".chat-empty")) showEmptyHint();
+  }
+
+  // Removes messages the other person deleted. Silently skipped if the
+  // list_message_ids function has not been added to the database yet.
+  async function reconcile() {
+    if (!shown.size) return;
+    try {
+      const ids = await rpc("list_message_ids", { p_room: profile.room });
+      if (!Array.isArray(ids)) return;
+
+      const live = new Set(ids.map(Number));
+      const oldestLive = ids.length ? Math.min(...live) : Infinity;
+      const complete = ids.length < 200;
+
+      for (const id of [...shown]) {
+        if (!live.has(id) && (complete || id >= oldestLive)) removeMessage(id);
+      }
+      if (selecting) refreshSelection();
+    } catch (error) {
+      /* database not updated yet: deletions just won't sync live */
+    }
+  }
+
+  /* ---------- select and delete ---------- */
+
+  function refreshSelection() {
+    msgsEl.querySelectorAll(".chat-msg").forEach((row) => {
+      row.classList.toggle("selected", selected.has(Number(row.dataset.id)));
+    });
+    selDelete.textContent = `Delete (${selected.size})`;
+    selDelete.disabled = selected.size === 0 || deleting;
+    selAll.textContent = selected.size && selected.size === shown.size ? "Clear" : "Select all";
+    if (selecting) setStatus(`${selected.size} selected`);
+  }
+
+  function enterSelect(firstId) {
+    if (!profile || selecting) return;
+    if (recorder) stopRecording(false);
+
+    selecting = true;
+    selected.clear();
+    if (firstId) selected.add(firstId);
+
+    msgsEl.classList.add("selecting");
+    inputRow.style.display = "none";
+    selectBar.classList.add("on");
+    $("chatSelect").style.display = "none";
+    refreshSelection();
+  }
+
+  function exitSelect() {
+    if (!selecting) return;
+    selecting = false;
+    selected.clear();
+
+    msgsEl.classList.remove("selecting");
+    selectBar.classList.remove("on");
+    if (profile) {
+      inputRow.style.display = "flex";
+      $("chatSelect").style.display = "";
+      setStatus(`You are ${profile.name}`);
+    }
+    refreshSelection();
+  }
+
+  function toggleSelected(id) {
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    refreshSelection();
+  }
+
+  async function deleteSelected() {
+    const ids = [...selected];
+    if (!ids.length || deleting || !profile) return;
+
+    const many = ids.length > 1 ? "messages" : "message";
+    if (!window.confirm(`Delete ${ids.length} ${many} for everyone? This can't be undone.`)) return;
+
+    deleting = true;
+    refreshSelection();
+    setStatus("Deleting…");
+
+    try {
+      await rpc("delete_messages", { p_room: profile.room, p_ids: ids });
+      ids.forEach(removeMessage);
+      deleting = false;
+      exitSelect();
+    } catch (error) {
+      console.error(error);
+      deleting = false;
+      refreshSelection();
+      setStatus("Couldn't delete. Add the new database function first.", true);
+    }
+  }
+
+  $("chatSelect").addEventListener("click", () => enterSelect());
+  $("selCancel").addEventListener("click", exitSelect);
+  selDelete.addEventListener("click", deleteSelected);
+  selAll.addEventListener("click", () => {
+    const rows = [...msgsEl.querySelectorAll(".chat-msg")].map((row) => Number(row.dataset.id));
+    if (selected.size === rows.length) selected.clear();
+    else rows.forEach((id) => selected.add(id));
+    refreshSelection();
+  });
+
+  // Tap a message to tick it while selecting.
+  msgsEl.addEventListener("click", (event) => {
+    if (!selecting || Date.now() < ignoreClickUntil) return;
+    const row = event.target.closest(".chat-msg");
+    if (!row) return;
+    event.preventDefault();
+    toggleSelected(Number(row.dataset.id));
+  });
+
+  // Press and hold a message to start selecting.
+  let pressTimer = null;
+  let pressX = 0;
+  let pressY = 0;
+
+  msgsEl.addEventListener("pointerdown", (event) => {
+    if (selecting || event.target.closest("audio")) return;
+    const row = event.target.closest(".chat-msg");
+    if (!row) return;
+
+    pressX = event.clientX;
+    pressY = event.clientY;
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      ignoreClickUntil = Date.now() + 600;
+      enterSelect(Number(row.dataset.id));
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, 500);
+  });
+
+  msgsEl.addEventListener("pointermove", (event) => {
+    if (pressTimer && Math.hypot(event.clientX - pressX, event.clientY - pressY) > 10) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  });
+
+  ["pointerup", "pointercancel", "pointerleave"].forEach((type) => {
+    msgsEl.addEventListener(type, () => {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    });
+  });
 
   function showEmptyHint() {
     const hint = document.createElement("div");
