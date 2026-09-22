@@ -266,15 +266,316 @@ playlist.addEventListener("keydown", (event) => {
   }
 });
 
+
+/* ---------- shared songs (Supabase) ----------
+   Songs added through the app are uploaded so every device that knows the
+   passcode sees the same playlist. Without the database set up, songs stay
+   on this device only. */
+
+function sharedCfg() {
+  const c = window.SWATLOVE_CHAT || {};
+  return c.url && c.anonKey && !/YOUR-/.test(`${c.url}${c.anonKey}`) ? c : null;
+}
+
+// The room is the fingerprint saved when the passcode was entered.
+function sharedRoom() {
+  try {
+    const unlocked = localStorage.getItem("swatlove-unlock");
+    if (unlocked) return unlocked;
+    const chat = JSON.parse(localStorage.getItem("swatlove-chat") || "null");
+    return (chat && chat.room) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+const sharedReady = () => Boolean(sharedCfg() && sharedRoom());
+
+function sbHeaders(extra) {
+  const key = sharedCfg().anonKey;
+  const base = { apikey: key };
+  if (String(key).startsWith("eyJ")) base.Authorization = `Bearer ${key}`;
+  return Object.assign(base, extra || {});
+}
+
+async function sbRpc(name, args) {
+  const response = await fetch(`${sharedCfg().url}/rest/v1/rpc/${name}`, {
+    method: "POST",
+    headers: sbHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(args)
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function sbUpload(path, blob, mime) {
+  const response = await fetch(`${sharedCfg().url}/storage/v1/object/library/${path}`, {
+    method: "POST",
+    headers: sbHeaders({ "Content-Type": mime, "x-upsert": "false" }),
+    body: blob
+  });
+  if (!response.ok) throw new Error(await response.text());
+}
+
+const sharedUrl = (path) => `${sharedCfg().url}/storage/v1/object/public/library/${path}`;
+
+const MIME_EXT = {
+  "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
+  "audio/aac": "aac", "audio/wav": "wav", "audio/x-wav": "wav", "audio/ogg": "ogg",
+  "audio/flac": "flac", "audio/webm": "webm",
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic"
+};
+
+const EXT_MIME = {
+  mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac", wav: "audio/wav",
+  ogg: "audio/ogg", flac: "audio/flac", webm: "audio/webm",
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic"
+};
+
+function fileExt(blob, fallback) {
+  const fromName = blob && blob.name && (blob.name.match(/\.([A-Za-z0-9]{2,5})$/) || [])[1];
+  if (fromName) return fromName.toLowerCase();
+  const fromType = blob && blob.type && MIME_EXT[blob.type.split(";")[0]];
+  return fromType || fallback;
+}
+
+function fileMime(blob, ext, fallback) {
+  const type = blob && blob.type && blob.type.split(";")[0];
+  return type || EXT_MIME[ext] || fallback;
+}
+
+function randomToken() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function fromShared(row) {
+  const id = `shared:${row.id}`;
+  return {
+    id,
+    dbId: row.id,
+    shared: true,
+    title: row.title,
+    artist: row.artist,
+    fav: readFav(id),
+    record: null,
+    audioUrl: sharedUrl(row.audio_path),
+    coverUrl: row.cover_path ? sharedUrl(row.cover_path) : DEFAULT_COVER
+  };
+}
+
+// Uploads one song and lists it for everyone.
+async function uploadSharedSong(audioBlob, coverBlob, title, artist) {
+  const room = sharedRoom();
+
+  const audioExt = fileExt(audioBlob, "mp3");
+  const audioPath = `${room}/${Date.now()}-${randomToken()}.${audioExt}`;
+  await sbUpload(audioPath, audioBlob, fileMime(audioBlob, audioExt, "audio/mpeg"));
+
+  let coverPath = null;
+  if (coverBlob) {
+    const coverExt = fileExt(coverBlob, "jpg");
+    coverPath = `${room}/${Date.now()}-${randomToken()}-cover.${coverExt}`;
+    await sbUpload(coverPath, coverBlob, fileMime(coverBlob, coverExt, "image/jpeg"));
+  }
+
+  await sbRpc("add_song", {
+    p_room: room,
+    p_title: title,
+    p_artist: artist,
+    p_audio_path: audioPath,
+    p_cover_path: coverPath
+  });
+  return audioPath;
+}
+
+// Keeps this device's playlist in step with the shared list.
+async function syncShared() {
+  if (!sharedReady()) return false;
+
+  let rows;
+  try {
+    rows = await sbRpc("list_songs", { p_room: sharedRoom() });
+  } catch (error) {
+    return false;
+  }
+  if (!Array.isArray(rows)) return false;
+
+  const current = songs[currentIndex];
+  const currentId = current ? current.id : null;
+  const existing = new Map(songs.filter((song) => song.shared).map((song) => [song.id, song]));
+  const nextShared = rows.map((row) => existing.get(`shared:${row.id}`) || fromShared(row));
+
+  const before = songs.filter((song) => song.shared).map((song) => song.id).join(",");
+  const after = nextShared.map((song) => song.id).join(",");
+  if (before === after) return false;
+
+  songs = [
+    ...songs.filter((song) => song.builtin),
+    ...nextShared,
+    ...songs.filter((song) => !song.builtin && !song.shared)
+  ];
+  currentIndex = currentId ? songs.findIndex((song) => song.id === currentId) : -1;
+
+  if (currentId && currentIndex === -1) {
+    // the song playing here was deleted on the other device
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    resetPlayerView();
+  }
+
+  renderPlaylist();
+  updateShareButton();
+  return true;
+}
+
+// "Share N songs from this device" moves old on-device songs to the shared list.
+const shareButton = document.createElement("button");
+shareButton.type = "button";
+shareButton.hidden = true;
+shareButton.style.cssText =
+  "display:block;margin-top:14px;padding:0;background:none;color:var(--blue);font-size:12px;text-decoration:underline;";
+playlist.before(shareButton);
+
+let sharing = false;
+
+function localOnlySongs() {
+  return songs.filter((song) => !song.builtin && !song.shared);
+}
+
+function updateShareButton() {
+  if (sharing) return;
+  const count = localOnlySongs().length;
+  shareButton.hidden = !(sharedReady() && count > 0);
+  shareButton.textContent = `Share ${count} ${count === 1 ? "song" : "songs"} from this device`;
+}
+
+async function shareLocalSongs() {
+  const local = localOnlySongs();
+  if (!local.length || sharing) return;
+
+  const many = local.length === 1 ? "this song" : `these ${local.length} songs`;
+  if (!window.confirm(`Upload ${many} so the other device can play ${local.length === 1 ? "it" : "them"} too?`)) return;
+
+  sharing = true;
+  const playing = songs[currentIndex];
+  if (playing && !playing.builtin && !playing.shared) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    currentIndex = -1;
+    resetPlayerView();
+  }
+
+  try {
+    for (let i = 0; i < local.length; i++) {
+      shareButton.textContent = `Sharing ${i + 1} of ${local.length}…`;
+      const song = local[i];
+
+      await uploadSharedSong(song.record.audio, song.record.cover, song.title, song.artist);
+      await dbDelete(song.id);
+
+      const index = songs.indexOf(song);
+      if (index !== -1) songs.splice(index, 1);
+      URL.revokeObjectURL(song.audioUrl);
+      if (song.coverUrl !== DEFAULT_COVER) URL.revokeObjectURL(song.coverUrl);
+    }
+  } catch (error) {
+    console.error(error);
+    window.alert("Couldn't share every song. Check your connection and that the database update was run, then try again.");
+  }
+
+  sharing = false;
+  renderPlaylist();
+  await syncShared();
+  updateShareButton();
+}
+
+shareButton.addEventListener("click", shareLocalSongs);
+
+function waitForConfig() {
+  return new Promise((resolve) => {
+    let waited = 0;
+    (function check() {
+      if (window.SWATLOVE_CHAT || waited >= 3000) return resolve();
+      waited += 100;
+      setTimeout(check, 100);
+    })();
+  });
+}
+
+function resetUploadForm() {
+  audioFile.value = "";
+  coverFile.value = "";
+  backgroundFile.value = "";
+  titleInput.value = "";
+  artistInput.value = "";
+  audioName.textContent = "MP3, WAV, OGG, M4A";
+  coverName.textContent = "Image shown while the song plays";
+  backgroundName.textContent = "Image shown behind the app";
+}
+
+async function addSharedSong(audioData, coverData, backgroundData) {
+  const label = addSong.textContent;
+  addSong.disabled = true;
+  addSong.textContent = "Uploading…";
+  showError("");
+
+  try {
+    const title = titleInput.value.trim() || audioData.name.replace(/\.[^/.]+$/, "");
+    const artist = artistInput.value.trim() || "SWATLOVE Collection";
+
+    const audioPath = await uploadSharedSong(audioData, coverData, title, artist);
+
+    if (backgroundData) {
+      await settingSet("background", backgroundData);
+      setBackground(backgroundData);
+    }
+
+    await syncShared();
+    const index = songs.findIndex((song) => song.shared && song.audioUrl.endsWith(audioPath));
+    if (index !== -1) loadSong(index);
+
+    closeModal();
+    resetUploadForm();
+  } catch (error) {
+    console.error(error);
+    showError("Couldn't upload. Check your connection and that the database update was run. Files must be under 50 MB.");
+  } finally {
+    addSong.disabled = false;
+    addSong.textContent = label;
+  }
+}
+
+/* ---------- end shared songs ---------- */
+
 async function removeSong(index) {
   const removed = songs[index];
   if (!removed) return;
 
-  if (!window.confirm(`Remove "${removed.title}" from your playlist?`)) return;
+  const question = removed.shared
+    ? `Delete "${removed.title}" for everyone? It disappears on both devices.`
+    : `Remove "${removed.title}" from your playlist?`;
+  if (!window.confirm(question)) return;
+
+  if (removed.shared) {
+    try {
+      await sbRpc("delete_song", { p_room: sharedRoom(), p_id: removed.dbId });
+    } catch (error) {
+      console.error(error);
+      window.alert("Couldn't delete this song. Check your connection and try again.");
+      return;
+    }
+  }
 
   songs.splice(index, 1);
 
-  if (removed.builtin) {
+  if (removed.shared) {
+    /* nothing stored on this device */
+  } else if (removed.builtin) {
     // Songs stored in the GitHub repo can't be deleted from the app,
     // so they are hidden on this device. "Restore removed songs" brings them back.
     setHidden([...new Set([...getHidden(), removed.id])]);
@@ -334,7 +635,7 @@ heart.addEventListener("click", async () => {
   song.fav = !song.fav;
   updateHeart();
 
-  if (song.builtin) {
+  if (song.builtin || song.shared) {
     writeFav(song.id, song.fav);
     return;
   }
@@ -538,6 +839,11 @@ addSong.addEventListener("click", async () => {
     return;
   }
 
+  if (sharedReady()) {
+    await addSharedSong(audioData, coverData, backgroundData);
+    return;
+  }
+
   const record = {
     title: titleInput.value.trim() || audioData.name.replace(/\.[^/.]+$/, ""),
     artist: artistInput.value.trim() || "SWATLOVE Collection",
@@ -628,6 +934,14 @@ async function init() {
   }
 
   renderPlaylist();
+
+  await waitForConfig();
+  await syncShared();
+  updateShareButton();
+  setInterval(syncShared, 20000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncShared();
+  });
 }
 
 init();
