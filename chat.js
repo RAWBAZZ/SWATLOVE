@@ -82,6 +82,50 @@
     }
   }
 
+  /* ---------- ping sound ----------
+     A short original two-note chime, not a copy of any device's system sound.
+     Works while this tab is open; phones may mute background tabs. */
+
+  const PING = "\u0001SWAT_PING\u0001";
+  let audioCtx = null;
+  let firstPollDone = false;
+  let pingCooldownUntil = 0;
+
+  function getAudioCtx() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+    return audioCtx;
+  }
+
+  function playPing() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [880, 1318.51].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const start = now + i * 0.11;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.22, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.42);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.45);
+    });
+  }
+
+  // A tap anywhere lets the browser allow sound later, without needing
+  // another tap at the exact moment a ping arrives.
+  document.addEventListener("pointerdown", function prime() {
+    getAudioCtx();
+    document.removeEventListener("pointerdown", prime);
+  }, { once: true });
+
   /* ---------- state ---------- */
 
   let profile = loadProfile(); // { name, room, seen, gate }
@@ -152,6 +196,9 @@
     .chat-rec span { flex: 1; font-size: 15px; }
     .chat-rec .chat-send { background: linear-gradient(135deg, var(--purple), var(--pink)); }
     .chat-head .chat-leave { font-size: 12px; text-decoration: underline; }
+    .chat-head-actions { display: flex; align-items: center; gap: 14px; }
+    .chat-ping { align-self: center; margin: 4px 0; padding: 6px 14px; border-radius: 999px;
+      background: rgba(184, 242, 255, .12); color: var(--blue); font-size: 12px; font-weight: 700; }
     .chat-msg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
     .chat-msgs.selecting .chat-msg { cursor: pointer; }
     .chat-msgs.selecting audio { pointer-events: none; }
@@ -176,7 +223,8 @@
     <section class="chat-panel" id="chatPanel" role="dialog" aria-label="SATTU chat">
       <div class="chat-head">
         <div><strong>SATTU</strong><small id="chatStatus"></small></div>
-        <div>
+        <div class="chat-head-actions">
+          <button class="chat-leave" id="chatPing" type="button" style="display:none">🔔 Notify</button>
           <button class="chat-leave" id="chatSelect" type="button" style="display:none">Select</button>
           <button class="chat-leave" id="chatLeave" type="button" style="display:none">Leave</button>
           <button id="chatClose" type="button" aria-label="Close chat">×</button>
@@ -251,6 +299,7 @@
     setStatus("");
     $("chatLeave").style.display = "none";
     $("chatSelect").style.display = "none";
+    $("chatPing").style.display = "none";
 
     const unlocked = Boolean(unlockedRoom());
     codeInput.style.display = unlocked ? "none" : "";
@@ -273,6 +322,7 @@
     inputRow.style.display = "flex";
     setStatus(`You are ${profile.name}`);
     $("chatLeave").style.display = "";
+    $("chatPing").style.display = "";
     if (!selecting) $("chatSelect").style.display = "";
   }
 
@@ -321,6 +371,35 @@
   $("chatLeave").addEventListener("click", leaveChat);
   fab.addEventListener("click", openPanel);
   $("chatClose").addEventListener("click", closePanel);
+
+  $("chatPing").addEventListener("click", async () => {
+    if (!profile || Date.now() < pingCooldownUntil) return;
+    pingCooldownUntil = Date.now() + 6000;
+
+    const pingButton = $("chatPing");
+    pingButton.disabled = true;
+    pingButton.textContent = "🔔 Sent";
+    playPing();
+
+    try {
+      await rpc("send_message", {
+        p_room: profile.room,
+        p_sender: profile.name,
+        p_kind: "text",
+        p_body: PING,
+        p_audio_path: null
+      });
+      await poll();
+      scrollDown(true);
+    } catch (error) {
+      console.error(error);
+    }
+
+    setTimeout(() => {
+      pingButton.disabled = false;
+      pingButton.textContent = "🔔 Notify";
+    }, 6000);
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && isOpen) {
@@ -384,8 +463,17 @@
 
     const mine = isMine(message);
     const row = document.createElement("div");
-    row.className = `chat-msg ${mine ? "mine" : "theirs"}`;
     row.dataset.id = String(message.id);
+
+    if (message.kind === "text" && message.body === PING) {
+      row.className = "chat-msg chat-ping";
+      row.textContent = "🔔";
+      msgsEl.appendChild(row);
+      if (!mine && firstPollDone) playPing();
+      return;
+    }
+
+    row.className = `chat-msg ${mine ? "mine" : "theirs"}`;
 
     const who = document.createElement("span");
     who.className = "chat-who";
@@ -449,6 +537,7 @@
       if (isOpen) setStatus("Can't reach the chat. Retrying…", true);
     } finally {
       polling = false;
+      firstPollDone = true;
     }
   }
 
@@ -505,6 +594,7 @@
     inputRow.style.display = "none";
     selectBar.classList.add("on");
     $("chatSelect").style.display = "none";
+    $("chatPing").style.display = "none";
     refreshSelection();
   }
 
@@ -518,6 +608,7 @@
     if (profile) {
       inputRow.style.display = "flex";
       $("chatSelect").style.display = "";
+      $("chatPing").style.display = "";
       setStatus(`You are ${profile.name}`);
     }
     refreshSelection();
