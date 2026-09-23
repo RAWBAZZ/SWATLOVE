@@ -722,6 +722,12 @@
     if (!document.hidden) poll();
   });
 
+  // Phones pause background timers when the screen locks or another app
+  // opens. These two catch the moment the site is looked at again, so
+  // messages that arrived while it was paused show up right away.
+  window.addEventListener("focus", () => poll());
+  window.addEventListener("pageshow", () => poll());
+
   /* ---------- sending text ---------- */
 
   async function sendText() {
